@@ -9,10 +9,13 @@ const version = ref('1.0.0')
 const toolName = ref('')
 const permissions = ref('tool.execute')
 const timeoutMs = ref(4000)
+const showForm = ref(false)
 
 async function loadPlugins() {
-  const resp = await fetch(`${props.apiBase}/plugins`)
-  if (resp.ok) plugins.value = await resp.json()
+  try {
+    const resp = await fetch(`${props.apiBase}/plugins`)
+    if (resp.ok) plugins.value = await resp.json()
+  } catch { /* ignore */ }
 }
 
 async function installPlugin() {
@@ -29,6 +32,9 @@ async function installPlugin() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ manifest })
   })
+  pluginId.value = ''
+  toolName.value = ''
+  showForm.value = false
   await loadPlugins()
 }
 
@@ -47,38 +53,56 @@ onMounted(loadPlugins)
 </script>
 
 <template>
-  <div class="section">
-    <h3>Plugin Manager</h3>
-    <div class="row">
-      <input v-model="pluginId" placeholder="plugin_id" style="width:120px" />
-      <input v-model="toolName" placeholder="tool_name" style="width:120px" />
-      <input v-model="version" placeholder="version" style="width:80px" />
-      <input v-model="timeoutMs" type="number" placeholder="timeout_ms" style="width:90px" />
-      <button @click="installPlugin">Install</button>
+  <div>
+    <button class="btn btn-ghost btn-sm" @click="showForm = !showForm" style="margin-bottom:12px;">
+      {{ showForm ? '✕ Cancel' : '+ Install Plugin' }}
+    </button>
+
+    <div v-if="showForm" style="margin-bottom:16px;padding:14px;background:#1a1a1a;border-radius:var(--radius-sm);">
+      <div class="form-row" style="margin-bottom:8px;">
+        <div class="form-group" style="flex:1;margin-bottom:0;">
+          <label class="form-label">Plugin ID</label>
+          <input class="form-input" v-model="pluginId" placeholder="my-plugin" />
+        </div>
+        <div class="form-group" style="flex:1;margin-bottom:0;">
+          <label class="form-label">Tool Name</label>
+          <input class="form-input" v-model="toolName" placeholder="my_tool" />
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:10px;">
+        <div class="form-group" style="flex:1;margin-bottom:0;">
+          <label class="form-label">Version</label>
+          <input class="form-input" v-model="version" />
+        </div>
+        <div class="form-group" style="flex:1;margin-bottom:0;">
+          <label class="form-label">Timeout (ms)</label>
+          <input class="form-input" v-model="timeoutMs" type="number" />
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm" @click="installPlugin">Install</button>
     </div>
-    <table class="plugin-table" v-if="plugins.length">
-      <thead><tr><th>ID</th><th>Tool</th><th>Version</th><th>Enabled</th><th>Actions</th></tr></thead>
-      <tbody>
-        <tr v-for="p in plugins" :key="p.plugin_id">
-          <td>{{ p.plugin_id }}</td>
-          <td>{{ p.tool_name }}</td>
-          <td>{{ p.version }}</td>
-          <td>{{ p.enabled ? 'Yes' : 'No' }}</td>
-          <td>
-            <button class="small" @click="togglePlugin(p.plugin_id, p.enabled)">{{ p.enabled ? 'Disable' : 'Enable' }}</button>
-            <button class="small danger" @click="removePlugin(p.plugin_id)">Uninstall</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="muted" v-else>No plugins installed.</p>
+
+    <div v-if="plugins.length">
+      <table class="plugin-table">
+        <thead>
+          <tr><th>Plugin</th><th>Tool</th><th>Ver</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="p in plugins" :key="p.plugin_id">
+            <td style="font-weight:500;">{{ p.plugin_id }}</td>
+            <td><span class="tag tag-accent">{{ p.tool_name }}</span></td>
+            <td>{{ p.version }}</td>
+            <td>
+              <span class="tag" :class="p.enabled ? 'tag-success' : 'tag-error'">{{ p.enabled ? 'Active' : 'Off' }}</span>
+            </td>
+            <td style="text-align:right;">
+              <button class="btn btn-ghost btn-sm" @click="togglePlugin(p.plugin_id, p.enabled)">{{ p.enabled ? 'Disable' : 'Enable' }}</button>
+              <button class="btn btn-danger btn-sm" style="margin-left:4px;" @click="removePlugin(p.plugin_id)">Remove</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div v-else style="color:var(--text-muted);font-size:13px;padding:8px 0;">No plugins installed.</div>
   </div>
 </template>
-
-<style scoped>
-.plugin-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9em; }
-.plugin-table th, .plugin-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
-.plugin-table th { background: #f1f5f9; }
-.small { font-size: 0.8em; padding: 4px 8px; }
-.danger { background: #dc2626; }
-</style>

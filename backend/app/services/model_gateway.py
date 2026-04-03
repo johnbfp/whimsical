@@ -34,7 +34,12 @@ class OllamaProvider(ModelProvider):
         self.base_url = base_url.rstrip("/")
 
     async def chat(self, prompt: str) -> str:
-        payload = {"model": self.model_name, "prompt": prompt, "stream": False}
+        payload = {
+            "model": self.model_name,
+            "system": "你是一个智能AI助手。请始终用中文（简体）回复用户，无论用什么语言提问。",
+            "prompt": prompt,
+            "stream": False,
+        }
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(f"{self.base_url}/api/generate", json=payload)
             resp.raise_for_status()
@@ -65,7 +70,7 @@ class OllamaProvider(ModelProvider):
 class CloudProvider(ModelProvider):
     """OpenAI-compatible cloud provider (OpenAI / Anthropic / DeepSeek etc.)."""
 
-    def __init__(self, model_name: str, api_key: str, base_url: str = "https://api.openai.com/v1") -> None:
+    def __init__(self, model_name: str, api_key: str, base_url: str = "https://coding.dashscope.aliyuncs.com/v1") -> None:
         self.model_name = model_name
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -76,7 +81,10 @@ class CloudProvider(ModelProvider):
     async def chat(self, prompt: str) -> str:
         payload = {
             "model": self.model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {"role": "system", "content": "你是一个智能AI助手。请始终用中文（简体）回复用户，无论用什么语言提问。"},
+                {"role": "user", "content": prompt},
+            ],
         }
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
@@ -131,7 +139,7 @@ class ModelGateway:
         default_local_model: str,
         ollama_base_url: str = "http://127.0.0.1:11434",
         cloud_api_key: str = "",
-        cloud_base_url: str = "https://api.openai.com/v1",
+        cloud_base_url: str = "https://coding.dashscope.aliyuncs.com/v1",
     ) -> None:
         self.provider_name = "local"
         self.model_name = default_local_model

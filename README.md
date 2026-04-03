@@ -203,7 +203,7 @@ docker-compose up --build
 |----------|------|---------|
 | `local` | 本地 Mock 模拟 | 无需任何配置 |
 | `ollama` | Ollama 本地 LLM | 需运行 `ollama serve`，至少拉取一个模型 |
-| `cloud` | OpenAI 兼容 API | 需设置环境变量 `CLOUD_API_KEY` |
+| `cloud` | OpenAI 兼容 API（默认 DashScope） | 需设置环境变量 `CLOUD_API_KEY` |
 
 ### 6. 管理插件
 
@@ -380,7 +380,7 @@ Rust 执行器在端口 8088 运行，提供沙箱化的工具执行能力。
 |----------|--------|------|------|
 | `local` | `LocalMockProvider` | 模拟返回，无需 GPU | chat ✓ embed ✓ |
 | `ollama` | `OllamaProvider` | 连接本地 Ollama（如 llama3:8b）| chat ✓ embed ✓ |
-| `cloud` | `CloudProvider` | OpenAI / DeepSeek 兼容 API | chat ✓ embed ✓ |
+| `cloud` | `CloudProvider` | OpenAI 兼容 API（默认 DashScope） | chat ✓ embed ✓ |
 
 **启动自动探测**：启动时先探测 Ollama 是否可用（`GET /api/tags`），可用则使用 Ollama，否则降级为 LocalMock。
 
@@ -518,12 +518,16 @@ python -m pytest tests/ -v
 | `DEFAULT_LOCAL_MODEL` | llama3:8b | 默认模型名 |
 | `OLLAMA_BASE_URL` | http://127.0.0.1:11434 | Ollama 地址 |
 | `CLOUD_API_KEY` | （空） | Cloud 提供者 API Key |
-| `CLOUD_BASE_URL` | https://api.openai.com/v1 | Cloud API 地址 |
+| `CLOUD_BASE_URL` | https://coding.dashscope.aliyuncs.com/v1 | Cloud API 地址 |
 | `POSTGRES_DSN` | postgresql+asyncpg://agent:agent@127.0.0.1:5432/agentdb | Postgres 连接 |
 | `REDIS_URL` | redis://127.0.0.1:6379/0 | Redis 连接 |
 | `QDRANT_URL` | http://127.0.0.1:6333 | Qdrant 向量库地址 |
 | `QDRANT_COLLECTION` | agent_memory | Qdrant 集合名 |
 | `LOG_LEVEL` | INFO | 日志级别 |
+
+兼容别名：
+- `CLOUD_API_KEY` 也可使用 `DASHSCOPE_API_KEY` / `OPENAI_API_KEY`
+- `CLOUD_BASE_URL` 也可使用 `DASHSCOPE_BASE_URL` / `OPENAI_BASE_URL`
 
 ---
 
@@ -538,11 +542,11 @@ python -m pytest tests/ -v
 python mock_executor.py   # 监听 8088 端口，模拟所有工具
 ```
 
-### Q: 如何连接真实的 OpenAI / DeepSeek？
+### Q: 如何连接真实的云端 OpenAI 协议模型（默认 DashScope）？
 设置环境变量：
 ```powershell
 $env:CLOUD_API_KEY = "sk-your-api-key"
-$env:CLOUD_BASE_URL = "https://api.openai.com/v1"  # 或 DeepSeek 地址
+$env:CLOUD_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"  # 可按需改成其他 OpenAI 兼容地址
 ```
 然后通过 API 或前端切换到 `cloud` 提供者。
 

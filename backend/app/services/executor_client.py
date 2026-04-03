@@ -15,13 +15,14 @@ class ExecutorClient:
         tool_name: str,
         payload: dict[str, Any],
         timeout_ms: int = 4000,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         req = {
             "task_id": task_id,
             "tool_name": tool_name,
             "input": payload,
             "permissions": ["tool.execute"],
-            "idempotency_key": f"{task_id}:{tool_name}",
+            "idempotency_key": idempotency_key or f"{task_id}:{tool_name}",
             "timeout_ms": timeout_ms,
             "trace_id": task_id,
         }

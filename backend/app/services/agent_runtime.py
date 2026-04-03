@@ -63,7 +63,10 @@ class AgentRuntime:
             self.state_store.update_task_state(task_id, TaskState.PLANNING)
             await self.event_bus.publish(AgentEvent(event_type="state_event", task_id=task_id, payload={"state": TaskState.PLANNING}))
 
-            plan = await self.planner.build_plan(task.prompt)
+            plan = await self.planner.build_plan(
+                task.prompt,
+                memory_context=self.memory_service.get_context_str(task.user_id, last_n=6),
+            )
             self.state_store.set_plan(task_id, plan)
             logger.info("Plan built task_id=%s tools=%s", task_id, plan.selected_tools)
             await self.event_bus.publish(AgentEvent(event_type="task_event", task_id=task_id, payload={"plan": plan.model_dump()}))
@@ -72,7 +75,7 @@ class AgentRuntime:
             await self.event_bus.publish(AgentEvent(event_type="state_event", task_id=task_id, payload={"state": TaskState.RUNNING}))
 
             final_outputs: list[str] = []
-            for step in plan.execution_steps:
+            for step_idx, step in enumerate(plan.execution_steps):
                 self.state_store.update_task_state(task_id, TaskState.WAITING_TOOL)
                 await self.event_bus.publish(AgentEvent(event_type="state_event", task_id=task_id, payload={"state": TaskState.WAITING_TOOL, "tool": step.tool_name}))
 
@@ -84,7 +87,10 @@ class AgentRuntime:
                 # Validate input against plugin schema before execution
                 self.plugin_manager.validate_input(step.tool_name, step.input)
 
-                tool_result = await self.executor_client.execute_tool(task_id, step.tool_name, step.input, timeout_ms)
+                tool_result = await self.executor_client.execute_tool(
+                    task_id, step.tool_name, step.input, timeout_ms,
+                    idempotency_key=f"{task_id}:{step_idx}:{step.tool_name}",
+                )
                 execution_id = tool_result.get("execution_id", "")
                 if execution_id:
                     self.running_executions[task_id] = execution_id
@@ -96,9 +102,25 @@ class AgentRuntime:
 
                 self.state_store.update_task_state(task_id, TaskState.RUNNING)
 
-            llm_output = await self.model_gateway.provider.chat("\n".join(final_outputs))
+            # 构建包含执行上下文的合成 prompt
+            step_summary = "\n".join(
+                f"步骤{i+1} [{s.tool_name}]: {o[:500]}"
+                for i, (s, o) in enumerate(zip(plan.execution_steps, final_outputs))
+            )
+            synthesis_prompt = (
+                f"用户请求：{task.prompt}\n\n"
+                f"各步骤实际执行结果如下（这些结果已真实完成，不要质疑或修改）：\n{step_summary}\n\n"
+                f"请用自然语言中文向用户汇报每个步骤的实际结果。\n"
+                f"规则：\n"
+                f"- 如果 file_write 返回 [ok]，直接说明文件已成功创建\n"
+                f"- 如果 file_read 返回文本，把内容告知用户\n"
+                f"- 如果 shell_exec 有输出，展示输出结果\n"
+                f"- 如果 memory 操作返回 JSON，用中文描述操作结果\n"
+                f"- 不要假设结果有误，不要重复建议"
+            )
+            llm_output = await self.model_gateway.provider.chat(synthesis_prompt)
             self.state_store.set_result(task_id, llm_output)
-            self.memory_service.persist_summary(task.tenant_id, task.user_id, llm_output)
+            self.memory_service.persist_summary(task.tenant_id, task.user_id, task.prompt, llm_output, task_id)
 
             await self.event_bus.publish(AgentEvent(event_type="notification_event", task_id=task_id, payload={"message": "Task completed"}))
             await self.event_bus.publish(AgentEvent(event_type="state_event", task_id=task_id, payload={"state": TaskState.COMPLETED, "result": llm_output}))

@@ -14,10 +14,12 @@ from app.models.schemas import (
     ErrorResponse,
     MemoryRecallRequest,
     MemoryRecallResponse,
+    MemoryWriteRequest,
     ModelSwitchRequest,
     ModelSwitchResponse,
     PluginEnableResponse,
     PluginInstallRequest,
+    PluginManifest,
     TaskCancelResponse,
     TaskCreateRequest,
     TaskResponse,
@@ -42,6 +44,25 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     await model_gateway.try_ollama_then_fallback()
     logger.info("Agent runtime started, model_provider=%s", model_gateway.provider_name)
+
+    # 自动注册并启用所有内置工具插件
+    _default_plugins = [
+        PluginManifest(plugin_id="builtin.echo",           version="1.0.0", tool_name="echo",           permissions=["tool.execute"], timeout_ms=1000),
+        PluginManifest(plugin_id="builtin.file_write",     version="1.0.0", tool_name="file_write",     permissions=["tool.execute"], timeout_ms=5000),
+        PluginManifest(plugin_id="builtin.file_read",      version="1.0.0", tool_name="file_read",      permissions=["tool.execute"], timeout_ms=3000),
+        PluginManifest(plugin_id="builtin.http_fetch",     version="1.0.0", tool_name="http_fetch",     permissions=["tool.execute"], timeout_ms=15000),
+        PluginManifest(plugin_id="builtin.shell_exec",     version="1.0.0", tool_name="shell_exec",     permissions=["tool.execute"], timeout_ms=30000),
+        PluginManifest(plugin_id="builtin.json_transform", version="1.0.0", tool_name="json_transform", permissions=["tool.execute"], timeout_ms=2000),
+        PluginManifest(plugin_id="builtin.memory_write",   version="1.0.0", tool_name="memory.write",   permissions=["tool.execute"], timeout_ms=2000),
+        PluginManifest(plugin_id="builtin.memory_read",    version="1.0.0", tool_name="memory.read",    permissions=["tool.execute"], timeout_ms=2000),
+        PluginManifest(plugin_id="builtin.memory_search",  version="1.0.0", tool_name="memory.search",  permissions=["tool.execute"], timeout_ms=2000),
+        PluginManifest(plugin_id="builtin.memory_delete",  version="1.0.0", tool_name="memory.delete",  permissions=["tool.execute"], timeout_ms=2000),
+    ]
+    for _p in _default_plugins:
+        plugin_manager.install(_p)
+        plugin_manager.enable(_p.plugin_id)
+    logger.info("Registered %d built-in tool plugins", len(_default_plugins))
+
     yield
 
 
@@ -121,8 +142,33 @@ async def stream(websocket: WebSocket, task_id: str) -> None:
 
 @app.post("/memory/recall", response_model=MemoryRecallResponse)
 async def recall_memory(request: MemoryRecallRequest) -> MemoryRecallResponse:
-    items = memory_service.recall(request.tenant_id, request.user_id, request.top_k)
+    items = memory_service.recall(request.tenant_id, request.user_id, request.top_k, request.query)
     return MemoryRecallResponse(items=items)
+
+
+@app.post("/memory/write")
+async def write_memory(request: MemoryWriteRequest) -> dict:
+    memory_service.kv_write(request.tenant_id, request.user_id, request.key, request.value)
+    return {"ok": True, "key": request.key}
+
+
+@app.get("/memory/read")
+async def read_memory(tenant_id: str = "default", key: str = "") -> dict:
+    value = memory_service.kv_read(tenant_id, key)
+    if value is None:
+        raise HTTPException(status_code=404, detail=f"Key '{key}' not found")
+    return {"key": key, "value": value}
+
+
+@app.get("/memory/history/{user_id}")
+async def get_history(user_id: str, last_n: int = 20) -> list:
+    return memory_service.get_history_dicts(user_id, last_n)
+
+
+@app.get("/memory/search")
+async def search_memory(tenant_id: str = "default", query: str = "", top_k: int = 5) -> dict:
+    results = memory_service.kv_search(tenant_id, query, top_k)
+    return {"query": query, "results": results}
 
 
 @app.post("/plugins/install")

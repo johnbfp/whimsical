@@ -1,40 +1,43 @@
 <script setup>
-import { defineProps } from 'vue'
+import { ref, defineProps } from 'vue'
 
 const props = defineProps({
-  events: Array // AgentEvent[]
+  events: Array
 })
+
+const expandedIdx = ref(null)
+
+function typeClass(eventType) {
+  if (eventType === 'state_event') return 'state'
+  if (eventType === 'task_event') return 'task'
+  if (eventType === 'tool_event') return 'tool'
+  if (eventType === 'notification_event') return 'notification'
+  return ''
+}
+
+function toggle(idx) {
+  expandedIdx.value = expandedIdx.value === idx ? null : idx
+}
 </script>
 
 <template>
-  <div class="section">
-    <h3>Event Log</h3>
-    <div class="log">
-      <div class="item" v-for="(event, idx) in events" :key="idx">
-        <div class="event-header">
-          <strong :class="'type-' + event.event_type">{{ event.event_type }}</strong>
-          <span class="muted ts" v-if="event.timestamp">{{ new Date(event.timestamp).toLocaleTimeString() }}</span>
+  <div>
+    <div v-if="!events || !events.length" style="color:var(--text-muted);font-size:13px;padding:8px 0;">No events yet.</div>
+    <div class="event-list" v-else>
+      <div
+        class="event-item"
+        v-for="(event, idx) in events"
+        :key="idx"
+        @click="toggle(idx)"
+      >
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span class="event-type" :class="typeClass(event.event_type)">{{ event.event_type }}</span>
+          <span class="event-time" v-if="event.timestamp">{{ new Date(event.timestamp).toLocaleTimeString() }}</span>
         </div>
-        <pre style="white-space:pre-wrap">{{ JSON.stringify(event.payload, null, 2) }}</pre>
+        <div class="event-detail" v-if="expandedIdx === idx">
+          {{ JSON.stringify(event.payload, null, 2) }}
+        </div>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.log {
-  max-height: 380px;
-  overflow-y: auto;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 8px;
-}
-.item { border-bottom: 1px dashed #e5e7eb; padding: 6px 0; }
-.item:last-child { border-bottom: none; }
-.event-header { display: flex; gap: 8px; align-items: center; }
-.ts { font-size: 0.8em; }
-.type-state_event { color: #0f766e; }
-.type-task_event { color: #1d4ed8; }
-.type-tool_event { color: #d97706; }
-.type-notification_event { color: #7c3aed; }
-</style>

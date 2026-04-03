@@ -88,6 +88,13 @@ class MemoryRecallResponse(BaseModel):
     items: list[str]
 
 
+class MemoryWriteRequest(BaseModel):
+    tenant_id: str = "default"
+    user_id: str = "anonymous"
+    key: str
+    value: str
+
+
 class PluginManifest(BaseModel):
     plugin_id: str
     version: str
