@@ -26,6 +26,10 @@ export default defineConfig({
       '/healthz': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true
+      },
+      '/workspace': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
       }
     }
   }

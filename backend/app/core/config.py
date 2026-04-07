@@ -33,5 +33,8 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Workspace (sandbox directory for coding)
+    workspace_dir: str = r"E:\new_work_space\whimsical_ideas\sandbox"
+
 
 settings = Settings()

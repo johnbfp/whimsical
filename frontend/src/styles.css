@@ -764,6 +764,10 @@ body {
   box-shadow: var(--shadow-lg);
 }
 
+.right-panel.wide {
+  width: 600px;
+}
+
 .right-panel-header {
   display: flex;
   align-items: center;

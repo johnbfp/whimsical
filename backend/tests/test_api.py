@@ -9,7 +9,7 @@ client = TestClient(app)
 
 
 def _patch_executor():
-    async def fake_execute_tool(task_id: str, tool_name: str, payload: dict, timeout_ms: int = 4000):
+    async def fake_execute_tool(task_id: str, tool_name: str, payload: dict, timeout_ms: int = 4000, idempotency_key: str | None = None):
         return {
             "execution_id": f"exec-{task_id}",
             "task_id": task_id,
@@ -90,8 +90,8 @@ def test_model_switch_unsupported() -> None:
 
 
 def test_memory_recall() -> None:
-    runtime.memory_service.persist_summary("t1", "u1", "summary one")
-    resp = client.post("/memory/recall", json={"tenant_id": "t1", "user_id": "u1", "query": "s", "top_k": 3})
+    runtime.memory_service.persist_summary("t1", "u1", "test prompt", "summary one")
+    resp = client.post("/memory/recall", json={"tenant_id": "t1", "user_id": "u1", "query": "summary", "top_k": 3})
     assert resp.status_code == 200
     assert len(resp.json()["items"]) >= 1
 
@@ -168,3 +168,63 @@ def test_healthz() -> None:
     resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+
+# ── Workspace (coding) tests ────────────────────────────────────────────
+
+
+def test_workspace_tree() -> None:
+    resp = client.get("/workspace/tree?path=.&depth=2")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "entries" in data
+    assert isinstance(data["entries"], list)
+
+
+def test_workspace_write_and_read() -> None:
+    # Write
+    content = "print('hello workspace')\n"
+    resp = client.post("/workspace/file", json={"path": "_test_ws_tmp.py", "content": content})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+    # Read
+    resp = client.get("/workspace/file?path=_test_ws_tmp.py")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["binary"] is False
+    assert data["content"] == content
+    assert data["language"] == "python"
+
+    # Cleanup
+    import pathlib
+    from app.main import WORKSPACE_DIR
+    (WORKSPACE_DIR / "_test_ws_tmp.py").unlink(missing_ok=True)
+
+
+def test_workspace_run_command() -> None:
+    resp = client.post("/workspace/run", json={"command": "echo hello", "timeout": 10})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["exit_code"] == 0
+    assert "hello" in data["stdout"].lower()
+
+
+def test_workspace_search() -> None:
+    # Write a file to search
+    client.post("/workspace/file", json={"path": "_test_search.txt", "content": "unicorn rainbow\ntest line\n"})
+    resp = client.get("/workspace/search?query=unicorn&path=.")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["matches"]) >= 1
+    assert data["matches"][0]["text"] == "unicorn rainbow"
+
+    # Cleanup
+    import pathlib
+    from app.main import WORKSPACE_DIR
+    (WORKSPACE_DIR / "_test_search.txt").unlink(missing_ok=True)
+
+
+def test_workspace_path_escape() -> None:
+    resp = client.get("/workspace/file?path=../../etc/passwd")
+    assert resp.status_code == 403

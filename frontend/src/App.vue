@@ -7,6 +7,7 @@ import EventLog from './components/EventLog.vue'
 import ModelSwitch from './components/ModelSwitch.vue'
 import PluginPanel from './components/PluginPanel.vue'
 import MemoryRecall from './components/MemoryRecall.vue'
+import WorkspacePanel from './components/WorkspacePanel.vue'
 
 const apiBase = ref(window.location.origin)
 const userId = ref('demo-user')
@@ -18,7 +19,7 @@ const currentPlan = ref(null)
 const errorMsg = ref('')
 const messages = ref([])
 const sidebarOpen = ref(true)
-const activePanel = ref(null) // 'model' | 'plugin' | 'memory' | 'events' | 'settings'
+const activePanel = ref(null) // 'model' | 'plugin' | 'memory' | 'events' | 'settings' | 'workspace'
 let socket = null
 
 const chatArea = ref(null)
@@ -164,7 +165,11 @@ const quickPrompts = [
           </div>
           <div class="sidebar-item" :class="{ active: activePanel === 'memory' }" @click="openPanel('memory')">
             <span class="sidebar-item-icon">🧠</span>
-            <span>Memory Recall</span>
+            <span>Memory</span>
+          </div>
+          <div class="sidebar-item" :class="{ active: activePanel === 'workspace' }" @click="openPanel('workspace')">
+            <span class="sidebar-item-icon">💻</span>
+            <span>Workspace</span>
           </div>
         </div>
 
@@ -306,14 +311,15 @@ const quickPrompts = [
       <div class="right-panel-overlay" v-if="activePanel" @click="closePanel"></div>
     </Transition>
     <Transition name="slide">
-      <div class="right-panel" v-if="activePanel">
+      <div class="right-panel" :class="{ wide: activePanel === 'workspace' }" v-if="activePanel">
         <div class="right-panel-header">
           <h3>
             {{ activePanel === 'model' ? 'Model Switch' : '' }}
             {{ activePanel === 'plugin' ? 'Plugin Manager' : '' }}
-            {{ activePanel === 'memory' ? 'Memory Recall' : '' }}
+            {{ activePanel === 'memory' ? 'Memory' : '' }}
             {{ activePanel === 'events' ? 'Event Log' : '' }}
             {{ activePanel === 'settings' ? 'Settings' : '' }}
+            {{ activePanel === 'workspace' ? 'Workspace' : '' }}
           </h3>
           <button class="right-panel-close" @click="closePanel">✕</button>
         </div>
@@ -322,6 +328,7 @@ const quickPrompts = [
           <PluginPanel :apiBase="apiBase" v-if="activePanel === 'plugin'" />
           <MemoryRecall :apiBase="apiBase" v-if="activePanel === 'memory'" />
           <EventLog :events="events" v-if="activePanel === 'events'" />
+          <WorkspacePanel :apiBase="apiBase" v-if="activePanel === 'workspace'" />
           <div v-if="activePanel === 'settings'">
             <div class="form-group">
               <label class="form-label">API Base URL</label>

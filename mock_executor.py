@@ -32,6 +32,8 @@ def _mem_safe(s: str) -> str:
 ALLOWED_TOOLS = {
     "echo", "file_read", "file_write", "http_fetch", "shell_exec", "json_transform",
     "memory.write", "memory.read", "memory.search", "memory.delete",
+    "list_dir", "edit_file", "run_tests", "grep_search",
+    "create_dir", "delete_file", "rename_file",
 }
 
 records: dict[str, dict] = {}
@@ -268,6 +270,149 @@ def _run_tool(tool_name: str, tool_input: Any, task_id: str = "") -> str:
         if deleted:
             kv_file.unlink()
         return json.dumps({"ok": True, "key": key, "deleted": deleted})
+
+    if tool_name == "list_dir":
+        rel_path = tool_input.get("path", ".") if isinstance(tool_input, dict) else "."
+        target = (SANDBOX_DIR / rel_path).resolve()
+        if not str(target).startswith(str(SANDBOX_DIR.resolve())):
+            return json.dumps({"error": "路径不在沙盒范围内"})
+        if not target.exists():
+            return json.dumps({"error": f"目录不存在: {rel_path}"})
+        entries = []
+        try:
+            for item in sorted(target.iterdir()):
+                rel = str(item.relative_to(SANDBOX_DIR)).replace("\\", "/")
+                entries.append({
+                    "name": item.name,
+                    "path": rel,
+                    "is_dir": item.is_dir(),
+                    "size": item.stat().st_size if item.is_file() else 0,
+                })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+        return json.dumps({"path": rel_path, "entries": entries}, ensure_ascii=False)
+
+    if tool_name == "edit_file":
+        rel_path = tool_input.get("path", "") if isinstance(tool_input, dict) else ""
+        old_str = tool_input.get("old_string", "") if isinstance(tool_input, dict) else ""
+        new_str = tool_input.get("new_string", "") if isinstance(tool_input, dict) else ""
+        if not rel_path:
+            return json.dumps({"error": "path 为空"})
+        target = (SANDBOX_DIR / rel_path).resolve()
+        if not str(target).startswith(str(SANDBOX_DIR.resolve())):
+            return json.dumps({"error": "路径不在沙盒范围内"})
+        if not target.exists():
+            return json.dumps({"error": f"文件不存在: {rel_path}"})
+        try:
+            content = target.read_text(encoding="utf-8")
+            if old_str not in content:
+                return json.dumps({"error": "old_string 未找到", "path": rel_path})
+            if content.count(old_str) > 1:
+                return json.dumps({"error": "old_string 存在多处匹配，请提供更精确的上下文", "path": rel_path})
+            content = content.replace(old_str, new_str, 1)
+            target.write_text(content, encoding="utf-8")
+            return json.dumps({"ok": True, "path": rel_path, "edited": True})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    if tool_name == "grep_search":
+        query = tool_input.get("query", "") if isinstance(tool_input, dict) else str(tool_input)
+        rel_path = tool_input.get("path", ".") if isinstance(tool_input, dict) else "."
+        if not query:
+            return json.dumps({"error": "query 为空"})
+        search_dir = (SANDBOX_DIR / rel_path).resolve()
+        if not str(search_dir).startswith(str(SANDBOX_DIR.resolve())):
+            return json.dumps({"error": "路径不在沙盒范围内"})
+        results = []
+        try:
+            glob_pattern = "**/*"
+            for f in search_dir.glob(glob_pattern):
+                if f.is_file() and f.stat().st_size < 500_000:
+                    try:
+                        text = f.read_text(encoding="utf-8", errors="ignore")
+                        for i, line in enumerate(text.splitlines(), 1):
+                            if query.lower() in line.lower():
+                                results.append({
+                                    "file": str(f.relative_to(SANDBOX_DIR)).replace("\\", "/"),
+                                    "line": i,
+                                    "text": line.strip()[:200],
+                                })
+                                if len(results) >= 50:
+                                    break
+                    except Exception:
+                        pass
+                if len(results) >= 50:
+                    break
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+        return json.dumps({"query": query, "matches": results}, ensure_ascii=False)
+
+    if tool_name == "run_tests":
+        test_cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else str(tool_input)
+        if not test_cmd.strip():
+            # 默认尝试常见测试命令
+            test_cmd = "python -m pytest -v --tb=short 2>&1 || echo [test_done]"
+        import subprocess, sys
+        enc = "cp936" if sys.platform == "win32" else "utf-8"
+        try:
+            proc = subprocess.run(
+                test_cmd, shell=True, capture_output=True,
+                timeout=60, cwd=str(SANDBOX_DIR),
+            )
+            stdout = proc.stdout.decode(enc, errors="replace") if proc.stdout else ""
+            stderr = proc.stderr.decode(enc, errors="replace") if proc.stderr else ""
+            output = stdout + ("\n--- STDERR ---\n" + stderr if stderr.strip() else "")
+            return json.dumps({
+                "exit_code": proc.returncode,
+                "output": output[:5000],
+                "passed": proc.returncode == 0,
+            }, ensure_ascii=False)
+        except subprocess.TimeoutExpired:
+            return json.dumps({"error": "测试执行超时（>60s）", "passed": False})
+        except Exception as e:
+            return json.dumps({"error": str(e), "passed": False})
+
+    if tool_name == "create_dir":
+        rel_path = tool_input.get("path", "") if isinstance(tool_input, dict) else str(tool_input)
+        if not rel_path:
+            return json.dumps({"error": "path 为空"})
+        target = (SANDBOX_DIR / rel_path).resolve()
+        if not str(target).startswith(str(SANDBOX_DIR.resolve())):
+            return json.dumps({"error": "路径不在沙盒范围内"})
+        target.mkdir(parents=True, exist_ok=True)
+        return json.dumps({"ok": True, "path": rel_path, "created": True})
+
+    if tool_name == "delete_file":
+        rel_path = tool_input.get("path", "") if isinstance(tool_input, dict) else str(tool_input)
+        if not rel_path:
+            return json.dumps({"error": "path 为空"})
+        target = (SANDBOX_DIR / rel_path).resolve()
+        if not str(target).startswith(str(SANDBOX_DIR.resolve())):
+            return json.dumps({"error": "路径不在沙盒范围内"})
+        if not target.exists():
+            return json.dumps({"error": f"文件不存在: {rel_path}"})
+        if target.is_dir():
+            import shutil
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        return json.dumps({"ok": True, "path": rel_path, "deleted": True})
+
+    if tool_name == "rename_file":
+        old_path = tool_input.get("old_path", "") if isinstance(tool_input, dict) else ""
+        new_path = tool_input.get("new_path", "") if isinstance(tool_input, dict) else ""
+        if not old_path or not new_path:
+            return json.dumps({"error": "old_path 和 new_path 均为必填"})
+        src = (SANDBOX_DIR / old_path).resolve()
+        dst = (SANDBOX_DIR / new_path).resolve()
+        if not str(src).startswith(str(SANDBOX_DIR.resolve())) or not str(dst).startswith(str(SANDBOX_DIR.resolve())):
+            return json.dumps({"error": "路径不在沙盒范围内"})
+        if not src.exists():
+            return json.dumps({"error": f"源文件不存在: {old_path}"})
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.move(str(src), str(dst))
+        return json.dumps({"ok": True, "old_path": old_path, "new_path": new_path})
 
     return f"[mock] {tool_name} executed"
 
