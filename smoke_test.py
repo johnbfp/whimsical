@@ -65,7 +65,7 @@ test("Edit (string replace)", t_edit)
 def t_stat():
     post("/workspace/file", {"path": "_sstat.txt", "content": "stat"})
     d = get("/workspace/stat?path=_sstat.txt")
-    assert d["exists"] is True
+    assert d["is_file"] is True
     delete("/workspace/file?path=_sstat.txt")
 test("Stat", t_stat)
 
@@ -85,7 +85,7 @@ test("Search", t_search)
 test("Memory Write", lambda: post("/memory/write", {"tenant_id": "default", "user_id": "smoke", "key": "skey", "value": "sval"}))
 test("Memory Read", lambda: get("/memory/read?tenant_id=default&key=skey"))
 test("Memory Search", lambda: get("/memory/search?tenant_id=default&query=smoke&top_k=3"))
-test("Model Switch", lambda: post("/models/switch", {"provider": "openai", "model_name": "gpt-4"}))
+test("Model Switch", lambda: post("/models/switch", {"provider": "local", "model_name": "mock-v1"}))
 test("Plugin List", lambda: get("/plugins"))
 
 print("=" * 50, flush=True)

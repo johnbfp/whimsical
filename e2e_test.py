@@ -22,9 +22,9 @@ def get(path):
     return json.loads(r.read())
 
 def post(path, body=None):
-    data = json.dumps(body).encode() if body else None
+    data = json.dumps(body).encode() if body is not None else b""
     req = urllib.request.Request(f"{BASE}{path}", data=data,
-                                headers={"Content-Type": "application/json"} if data else {})
+                                headers={"Content-Type": "application/json"}, method="POST")
     r = urllib.request.urlopen(req)
     return json.loads(r.read())
 
@@ -74,7 +74,7 @@ def t_workspace_edit():
 def t_workspace_stat():
     post("/workspace/file", {"path": "_e2e_stat.txt", "content": "stat test"})
     d = get("/workspace/stat?path=_e2e_stat.txt")
-    assert d["exists"] is True, d
+    assert d.get("is_file") is True, d
     assert d["size"] > 0, d
     delete("/workspace/file?path=_e2e_stat.txt")
 
@@ -113,12 +113,12 @@ def t_memory_search():
     assert "results" in d, d
 
 def t_model_switch():
-    d = post("/models/switch", {"provider": "openai", "model_name": "gpt-4"})
-    assert d.get("provider") == "openai", d
+    d = post("/models/switch", {"provider": "local", "model_name": "mock-v1"})
+    assert d.get("provider") == "local", d
 
 def t_plugin_list():
     d = get("/plugins")
-    assert "plugins" in d, d
+    assert isinstance(d, list) and len(d) > 0, d
 
 def t_executor_health():
     d = get("http://127.0.0.1:8088/healthz".replace(BASE, ""))

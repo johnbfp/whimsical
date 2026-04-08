@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import TaskPanel from './components/TaskPanel.vue'
 import PlanView from './components/PlanView.vue'
 import ToolTrace from './components/ToolTrace.vue'
@@ -20,9 +20,120 @@ const errorMsg = ref('')
 const messages = ref([])
 const sidebarOpen = ref(true)
 const activePanel = ref(null) // 'model' | 'plugin' | 'memory' | 'events' | 'settings' | 'workspace'
+const activeSidebarSection = ref('controls')
 let socket = null
 
 const chatArea = ref(null)
+
+// ── Session management ────────────────────────────────────
+const STORAGE_KEY = 'whimsical_sessions'
+const sessions = ref([])         // [{id, title, messages, taskId, taskState, events, createdAt, updatedAt}]
+const currentSessionId = ref(null)
+
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+}
+
+function sessionTitle(session) {
+  const first = session.messages.find(m => m.role === 'user')
+  return first ? first.text.slice(0, 36) : '新会话'
+}
+
+function formatTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const diff = Date.now() - d
+  if (diff < 60000) return '刚刚'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+function saveSessions() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.value)) } catch {}
+}
+
+function saveCurrentSession() {
+  if (!currentSessionId.value) return
+  const idx = sessions.value.findIndex(s => s.id === currentSessionId.value)
+  if (idx === -1) return
+  sessions.value[idx] = {
+    ...sessions.value[idx],
+    title: sessionTitle(sessions.value[idx]),
+    messages: JSON.parse(JSON.stringify(messages.value)),
+    taskId: taskId.value,
+    taskState: taskState.value,
+    events: events.value.slice(0, 200),
+    updatedAt: new Date().toISOString()
+  }
+  saveSessions()
+}
+
+function _applySession(session) {
+  currentSessionId.value = session.id
+  messages.value = JSON.parse(JSON.stringify(session.messages))
+  taskId.value = session.taskId || ''
+  taskState.value = session.taskState || 'IDLE'
+  events.value = session.events || []
+  currentPlan.value = null
+  errorMsg.value = ''
+  taskResult.value = ''
+}
+
+function newSession() {
+  saveCurrentSession()
+  const session = {
+    id: genId(),
+    title: '新会话',
+    messages: [],
+    taskId: '',
+    taskState: 'IDLE',
+    events: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  sessions.value.unshift(session)
+  saveSessions()
+  _applySession(session)
+}
+
+function loadSession(id) {
+  if (id === currentSessionId.value) return
+  saveCurrentSession()
+  const session = sessions.value.find(s => s.id === id)
+  if (session) _applySession(session)
+}
+
+function deleteSession(id) {
+  const idx = sessions.value.findIndex(s => s.id === id)
+  if (idx === -1) return
+  sessions.value.splice(idx, 1)
+  saveSessions()
+  if (currentSessionId.value === id) {
+    if (sessions.value.length > 0) {
+      _applySession(sessions.value[0])
+    } else {
+      newSession()
+    }
+  }
+}
+
+onMounted(() => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      sessions.value = JSON.parse(stored)
+    }
+  } catch {}
+  if (sessions.value.length > 0) {
+    _applySession(sessions.value[0])
+  } else {
+    newSession()
+  }
+})
+
+// Auto-save when messages change
+watch(messages, () => { saveCurrentSession() }, { deep: true })
 
 const isRunning = computed(() =>
   !['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE'].includes(taskState.value)
@@ -123,6 +234,10 @@ function openPanel(panel) {
   activePanel.value = activePanel.value === panel ? null : panel
 }
 
+function toggleSidebarSection(section) {
+  activeSidebarSection.value = activeSidebarSection.value === section ? null : section
+}
+
 function closePanel() {
   activePanel.value = null
 }
@@ -138,7 +253,13 @@ const quickPrompts = [
 <template>
   <div class="app-layout">
     <!-- Sidebar -->
-    <aside class="sidebar" :class="{ open: sidebarOpen }">
+    <!-- Mobile overlay: tap outside sidebar to close it -->
+    <div
+      v-if="sidebarOpen"
+      class="sidebar-overlay"
+      @click="sidebarOpen = false"
+    ></div>
+    <aside class="sidebar" :class="{ open: sidebarOpen, collapsed: !sidebarOpen }">
       <div class="sidebar-header">
         <div class="sidebar-brand">
           <div class="brand-icon">W</div>
@@ -147,53 +268,100 @@ const quickPrompts = [
             <div class="brand-sub">AI Runtime Console</div>
           </div>
         </div>
-        <button class="new-task-btn" @click="messages = []; taskId = ''; taskState = 'IDLE'; taskResult = ''; errorMsg = ''; events = []; currentPlan = null">
+        <button class="new-task-btn" @click="newSession()">
           <span>+</span> New conversation
         </button>
       </div>
 
       <div class="sidebar-body">
+        <!-- Sessions history list -->
+        <div class="sessions-list">
+          <div class="sidebar-section-title" style="padding: 10px 10px 4px; display:block;">会话记录</div>
+          <div
+            v-for="session in sessions"
+            :key="session.id"
+            class="session-item"
+            :class="{ active: session.id === currentSessionId }"
+            @click="loadSession(session.id)"
+          >
+            <div class="session-item-body">
+              <div class="session-title">{{ sessionTitle(session) }}</div>
+              <div class="session-time">{{ formatTime(session.updatedAt) }}</div>
+            </div>
+            <button class="session-delete" @click.stop="deleteSession(session.id)" title="删除">×</button>
+          </div>
+          <div v-if="!sessions.length" class="session-empty">暂无会话</div>
+        </div>
+
+        <div class="sidebar-divider"></div>
         <div class="sidebar-section">
-          <div class="sidebar-section-title">Controls</div>
-          <div class="sidebar-item" :class="{ active: activePanel === 'model' }" @click="openPanel('model')">
-            <span class="sidebar-item-icon">⚡</span>
-            <span>Model Switch</span>
-          </div>
-          <div class="sidebar-item" :class="{ active: activePanel === 'plugin' }" @click="openPanel('plugin')">
-            <span class="sidebar-item-icon">🧩</span>
-            <span>Plugin Manager</span>
-          </div>
-          <div class="sidebar-item" :class="{ active: activePanel === 'memory' }" @click="openPanel('memory')">
-            <span class="sidebar-item-icon">🧠</span>
-            <span>Memory</span>
-          </div>
-          <div class="sidebar-item" :class="{ active: activePanel === 'workspace' }" @click="openPanel('workspace')">
-            <span class="sidebar-item-icon">💻</span>
-            <span>Workspace</span>
+          <button
+            class="sidebar-section-toggle"
+            :class="{ open: activeSidebarSection === 'controls' }"
+            @click="toggleSidebarSection('controls')"
+          >
+            <span class="sidebar-section-title">Controls</span>
+            <span class="sidebar-section-arrow">▾</span>
+          </button>
+          <div class="sidebar-section-content" v-if="activeSidebarSection === 'controls'">
+            <div class="sidebar-item" :class="{ active: activePanel === 'model' }" @click="openPanel('model')">
+              <span class="sidebar-item-icon">⚡</span>
+              <span>Model Switch</span>
+            </div>
+            <div class="sidebar-item" :class="{ active: activePanel === 'plugin' }" @click="openPanel('plugin')">
+              <span class="sidebar-item-icon">🧩</span>
+              <span>Plugin Manager</span>
+            </div>
+            <div class="sidebar-item" :class="{ active: activePanel === 'memory' }" @click="openPanel('memory')">
+              <span class="sidebar-item-icon">🧠</span>
+              <span>Memory</span>
+            </div>
+            <div class="sidebar-item" :class="{ active: activePanel === 'workspace' }" @click="openPanel('workspace')">
+              <span class="sidebar-item-icon">💻</span>
+              <span>Workspace</span>
+            </div>
           </div>
         </div>
 
         <div class="sidebar-section">
-          <div class="sidebar-section-title">Monitor</div>
-          <div class="sidebar-item" :class="{ active: activePanel === 'events' }" @click="openPanel('events')">
-            <span class="sidebar-item-icon">📋</span>
-            <span>Event Log</span>
-            <span v-if="events.length" style="margin-left:auto;font-size:11px;color:var(--text-muted)">{{ events.length }}</span>
+          <button
+            class="sidebar-section-toggle"
+            :class="{ open: activeSidebarSection === 'monitor' }"
+            @click="toggleSidebarSection('monitor')"
+          >
+            <span class="sidebar-section-title">Monitor</span>
+            <span class="sidebar-section-arrow">▾</span>
+          </button>
+          <div class="sidebar-section-content" v-if="activeSidebarSection === 'monitor'">
+            <div class="sidebar-item" :class="{ active: activePanel === 'events' }" @click="openPanel('events')">
+              <span class="sidebar-item-icon">📋</span>
+              <span>Event Log</span>
+              <span v-if="events.length" style="margin-left:auto;font-size:11px;color:var(--text-muted)">{{ events.length }}</span>
+            </div>
           </div>
         </div>
 
         <div class="sidebar-section" v-if="taskId">
-          <div class="sidebar-section-title">Current Task</div>
-          <div style="padding: 8px 10px;">
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">
-              {{ taskId.slice(0, 12) }}…
-            </div>
-            <span class="state-pill" :class="stateLabel">
-              <span class="state-dot"></span>
-              {{ taskState }}
-            </span>
-            <div style="margin-top: 8px;" v-if="isRunning">
-              <button class="btn btn-ghost btn-sm" @click="cancelTask" style="width:100%">Cancel Task</button>
+          <button
+            class="sidebar-section-toggle"
+            :class="{ open: activeSidebarSection === 'task' }"
+            @click="toggleSidebarSection('task')"
+          >
+            <span class="sidebar-section-title">Current Task</span>
+            <span class="sidebar-section-arrow">▾</span>
+          </button>
+          <div class="sidebar-section-content" v-if="activeSidebarSection === 'task'">
+            <div style="padding: 8px 10px;">
+              <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">
+                {{ taskId.slice(0, 12) }}…
+              </div>
+              <span class="state-pill" :class="stateLabel">
+                <span class="state-dot"></span>
+                {{ taskState }}
+              </span>
+              <div style="margin-top: 8px;" v-if="isRunning">
+                <button class="btn btn-ghost btn-sm" @click="cancelTask" style="width:100%">Cancel Task</button>
+              </div>
             </div>
           </div>
         </div>
@@ -215,7 +383,7 @@ const quickPrompts = [
       <!-- Header -->
       <div class="main-header">
         <div class="main-header-left">
-          <button class="header-btn" @click="sidebarOpen = !sidebarOpen" style="display:none">☰</button>
+          <button class="header-btn" @click="sidebarOpen = !sidebarOpen" :title="sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'">☰</button>
           <div class="model-selector" @click="openPanel('model')">
             Whimsical Agent
             <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 11L3 6h10z"/></svg>
